@@ -22,17 +22,20 @@ import {
   Divider,
 } from "@nextui-org/react";
 import {
+  AckMessage,
   ConnectionStatus,
   ReliableWebSocketClient,
-} from "@/lib/reliable_client";
+} from "@/lib/reliable_protobuf_client";
+import { UserTextMessage } from "@/protos/chatty-pal";
+import { Any } from "@/protos/google/protobuf/any";
 
 const endpoint = "http://127.0.0.1:8000/v1/pubsub";
 const token =
   "eyJhbGciOiJIUzI1NiIsImtpZCI6ImNqYWt5cnlnaEl0M3VkaDgiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL3hmZ3plaW1ranV5dHZqc3N3bGJnLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiJjMWNjYjVkNy0yNTQyLTRhM2UtYmQyZS1kNDAzMzJlZTRhNmIiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzI5NjY4Mzk4LCJpYXQiOjE3MjkwNjM1OTgsImVtYWlsIjoibGl1aGFpYm9AbG9va2kuYWkiLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsIjoibGl1aGFpYm9AbG9va2kuYWkiLCJlbWFpbF92ZXJpZmllZCI6ZmFsc2UsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiYzFjY2I1ZDctMjU0Mi00YTNlLWJkMmUtZDQwMzMyZWU0YTZiIn0sInJvbGUiOiJhdXRoZW50aWNhdGVkIiwiYWFsIjoiYWFsMSIsImFtciI6W3sibWV0aG9kIjoib3RwIiwidGltZXN0YW1wIjoxNzI5MDYzNTk4fV0sInNlc3Npb25faWQiOiI3MDdlYWVhMi02MjNjLTQ3MjgtOWE3YS1kNTBiZDI0YmRmMjkiLCJpc19hbm9ueW1vdXMiOmZhbHNlfQ.tNFm3NmtHbeRhkcy-FjXU5NOOJVd0S4FcsZLE0K6wng";
 
 interface Message {
-  ackId: number;
-  data: unknown;
+  ackId: string | number;
+  data: string;
   success?: boolean;
   datetime?: Date;
 }
@@ -50,10 +53,12 @@ export default function Home() {
       { ...msg, datetime: msg.datetime || new Date() },
     ]);
   const updateMessage = useCallback(
-    (ackId: number, updates: Partial<Omit<Message, "ackId">>) => {
+    (ackId: number | string, updates: Partial<Omit<Message, "ackId">>) => {
       console.log(`update ${ackId}: ${JSON.stringify(updates)}`);
       setMessages((msgs) => {
-        const msg = msgs.find((msg) => msg.ackId === ackId);
+        const msg = msgs.find(
+          (msg) => msg.ackId.toString() === ackId.toString()
+        );
         if (msg) {
           Object.assign(msg, updates);
         }
@@ -65,12 +70,12 @@ export default function Home() {
 
   const [client, setClient] = useState<ReliableWebSocketClient>();
 
-  // 周期刷新 client 的状态（React 发现不了对象内部的变化）
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      setClient((client) => (client ? client : client));
-    }, 500);
-    return () => clearInterval(intervalId);
+  // 刷新 client 的状态（React 发现不了对象内部的变化）
+  const refreshClient = useCallback(() => {
+    setClient((client) => {
+      setTimeout(() => setClient(client), 100);
+      return undefined;
+    });
   }, []);
 
   const connect = useCallback(async () => {
@@ -87,16 +92,60 @@ export default function Home() {
         },
         onConnected: (msg) => {
           console.log("connected", msg);
+          refreshClient();
         },
         onDisconnected: (msg) => {
           console.log("disconnected", msg);
+          refreshClient();
         },
         onMessage: (msg) => {
+          // 接收 Server 发送的消息
           console.log("received", msg);
-          addMessage({
-            ackId: 0,
-            data: `${JSON.stringify(msg.data)}`,
-          });
+          // text data
+          if (msg.data?.data.oneofKind === "textData") {
+            addMessage({
+              ackId: 0,
+              data: msg.data.data.textData,
+            });
+            return;
+          }
+          // binary data
+          if (msg.data?.data.oneofKind === "binaryData") {
+            let data: Any | undefined;
+            try {
+              // 将 binary 当做 protobuf.Any 处理
+              data = Any.fromBinary(msg.data.data.binaryData);
+            } catch (e) {
+              // unknown binary data
+              addMessage({
+                ackId: 0,
+                data: `[binary] length=${msg.data.data.binaryData.length}`,
+              });
+              return;
+            }
+            // fallback to protobuf data
+            msg.data.data = {
+              oneofKind: "protobufData",
+              protobufData: data,
+            };
+          }
+          // protobuf message
+          if (msg.data?.data.oneofKind === "protobufData") {
+            const data = msg.data.data.protobufData;
+            if (Any.contains(data, UserTextMessage)) {
+              const user_text = Any.unpack(data, UserTextMessage);
+              addMessage({
+                ackId: 0,
+                data: `${user_text.content}`,
+              });
+            } else {
+              // unknown message
+              addMessage({
+                ackId: 0,
+                data: `[${data.typeUrl}]`,
+              });
+            }
+          }
         },
         log: console.log,
       });
@@ -105,7 +154,7 @@ export default function Home() {
       });
       return client;
     });
-  }, []);
+  }, [refreshClient]);
 
   const reconnect = useCallback(() => {
     client?.abort();
@@ -113,18 +162,25 @@ export default function Home() {
 
   const [inputValue, setInputValue] = useState<string>();
   const [isLoading, setIsLoading] = useState(false);
-  const ackId = useRef(0);
 
   const sendMessage = useCallback(
     async (msg: Message) => {
-      const ack = await client?.sendEvent(msg.ackId, msg.data);
-      if (ack) {
-        if (ack.success == true) {
-          updateMessage(ack.ackId, { success: true });
-        } else {
-          updateMessage(ack.ackId, { success: false });
-          console.error(`Failed: ${ack.error}`);
+      try {
+        const ack = await client?.sendEvent(msg.ackId, "user_text", {
+          data: {
+            oneofKind: "protobufData",
+            protobufData: Any.pack(
+              UserTextMessage.create({ content: `${msg.data}` }),
+              UserTextMessage
+            ),
+          },
+        });
+        if (ack) {
+          updateMessage(ack.ackId, { success: ack.success });
         }
+      } catch (ack) {
+        updateMessage(msg.ackId, { success: false });
+        console.error(`Failed: ${ack}`);
       }
     },
     [client, updateMessage]
@@ -135,12 +191,9 @@ export default function Home() {
 
     setIsLoading(true);
     try {
-      ackId.current++;
       const msg = {
-        ackId: ackId.current,
-        data: {
-          content: inputValue,
-        },
+        ackId: new Date().valueOf(),
+        data: inputValue,
       };
       addMessage(msg);
       sendMessage(msg);
@@ -149,7 +202,7 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
-  }, [inputValue, ackId, sendMessage]);
+  }, [inputValue, sendMessage]);
 
   const retrySubmit = useCallback(
     (msg: Message) => {
@@ -182,7 +235,6 @@ export default function Home() {
           </Button>
           <form
             onSubmit={async (e) => {
-              console.log("submit");
               e.preventDefault();
               await onSubmit();
             }}
