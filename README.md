@@ -15,5 +15,6 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 Use `awps-tunnel` to transfer data from Azure Web PubSub to local server.
 
 ```bash
+export WebPubSubConnectionString="Endpoint=https://xxxxxxx.webpubsub.azure.com;AccessKey=yyyyyyy;Version=1.0;"
 awps-tunnel run --hub chat --upstream http://localhost:8000
 ```
