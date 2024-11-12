@@ -1,7 +1,0 @@
-syntax = "proto3";
-
-package looki.chatty_pal;
-
-message UserTextMessage {
-    string content = 1;
-}

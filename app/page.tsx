@@ -26,7 +26,7 @@ import {
   ConnectionStatus,
   ReliableWebSocketClient,
 } from "@/lib/reliable_protobuf_client";
-import { UserTextMessage } from "@/protos/chatty-pal";
+import { TextMessage } from "@/protos/test";
 import { Any } from "@/protos/google/protobuf/any";
 
 const endpoint = "http://127.0.0.1:8000/v1/pubsub";
@@ -131,8 +131,8 @@ export default function Home() {
           // protobuf message
           if (msg.data?.data.oneofKind === "protobufData") {
             const data = msg.data.data.protobufData;
-            if (Any.contains(data, UserTextMessage)) {
-              const user_text = Any.unpack(data, UserTextMessage);
+            if (Any.contains(data, TextMessage)) {
+              const user_text = Any.unpack(data, TextMessage);
               addMessage({
                 ackId: 0,
                 data: `${user_text.content}`,
@@ -169,8 +169,8 @@ export default function Home() {
           data: {
             oneofKind: "protobufData",
             protobufData: Any.pack(
-              UserTextMessage.create({ content: `${msg.data}` }),
-              UserTextMessage
+              TextMessage.create({ content: `${msg.data}` }),
+              TextMessage
             ),
           },
         });
