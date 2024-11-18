@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package looki.chatty_pal;
+
+import "google/protobuf/struct.proto";
+
+message UserMessage {
+  oneof message {
+    UserEvent event = 1;
+    SeqAckMessage seq_ack = 2;
+  }
+
+  message UserEvent {
+    uint64 ack_id = 1;  // ack_id 应按顺序自增，方便后期排查数据丢失
+    UserEventCommon common = 2;
+    oneof payload {
+      UserTextEvent text = 10;
+      UserAudioEvent audio = 11;
+      UserFileEvent file = 12;
+      UserSwitchCharEvent switch_char = 13;
+      UserSkipOnBoardingEvent skip_on_boarding = 14;
+    }
+  }
+
+  message SeqAckMessage {
+    uint64 seq_id = 1;
+  }
+}
+
+message UserEventCommon {
+  message UserCommon {
+    string tz = 1;
+    string tz_id = 2;
+    string locale = 3;
+    UserGnss gnss = 4;
+
+    message UserGnss {
+      double lat = 1;
+      double lng = 2;
+      string sub_locality = 3;    // Neighborhood
+      string locality = 4;        // City
+      string admin_area = 5;      // State/Province
+      string country_code = 6;
+      string country = 7;
+    }
+  }
+  uint64 msg_id = 1;
+  optional UserCommon user_common = 2;
+  optional bool audio_on = 3;
+}
+
+message UserTextEvent {
+  uint64 char_id = 1;
+  string content = 2;
+}
+
+message UserAudioEvent {
+  uint64 char_id = 1;
+  oneof data {
+    Started started = 10;       // 对应 user_audio_cmd type=0
+    Content content = 11;       // 对应 user_audio
+    ResendContent resend = 12;  // 对应 user_resend_audio
+    Ended ended = 13;           // 对应 user_audio_cmd type=1
+  }
+
+  message Started {
+    string audio_format = 1;
+  }
+  message Ended {
+    bool canceled = 1;
+  }
+  message Content {
+    bytes audio = 1;
+  }
+  message ResendContent {
+    bytes audio = 1;
+    string audio_format = 2;
+  }
+}
+
+message UserFileEvent {
+  uint64 char_id = 1;
+  bytes content = 2;
+  string type = 3;
+  optional google.protobuf.Struct metadata = 4;
+}
+
+message UserSwitchCharEvent {
+  uint64 char_id = 1;
+  bool manual = 2;
+}
+
+message UserSkipOnBoardingEvent {
+  uint64 char_id = 1;
+  int32 cur_step = 2;
+}

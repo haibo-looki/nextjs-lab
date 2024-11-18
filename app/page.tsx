@@ -22,17 +22,20 @@ import {
   Divider,
 } from "@nextui-org/react";
 import {
-  AckMessage,
   ConnectionStatus,
   ReliableWebSocketClient,
-} from "@/lib/reliable_protobuf_client";
+} from "@/lib/chattypal_client";
 import { TextMessage } from "@/protos/test";
 import { Any } from "@/protos/google/protobuf/any";
+import { v4 as uuidv4 } from "uuid";
 
-const endpoint = "http://127.0.0.1:8000/v1/pubsub";
 const token = process.env.NEXT_PUBLIC_AUTH_TOKEN;
 
+
+msg_buffer: {}[] = [];
+
 interface Message {
+  id?: string;
   ackId: string | number;
   data: string;
   success?: boolean;
@@ -49,7 +52,7 @@ export default function Home() {
   const addMessage = (msg: Message) =>
     setMessages((msgs) => [
       ...msgs,
-      { ...msg, datetime: msg.datetime || new Date() },
+      { ...msg, datetime: msg.datetime || new Date(), id: uuidv4() },
     ]);
   const updateMessage = useCallback(
     (ackId: number | string, updates: Partial<Omit<Message, "ackId">>) => {
@@ -81,68 +84,49 @@ export default function Home() {
     setClient((oldClient) => {
       oldClient?.close();
       const client = new ReliableWebSocketClient({
-        negotiate: async () => {
-          const res = await fetch(`${endpoint}/negotiate`, {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          });
-          return await res.json();
-        },
+        url: `ws://${window.location.hostname}:8000/v1/realtime/ws`,
+        token: `${token}`,
         onConnected: (msg) => {
           console.log("connected", msg);
           refreshClient();
         },
-        onDisconnected: (msg) => {
-          console.log("disconnected", msg);
+        onDisconnected: () => {
+          console.log("disconnected");
           refreshClient();
         },
         onMessage: (msg) => {
           // 接收 Server 发送的消息
           console.log("received", msg);
           // text data
-          if (msg.data?.data.oneofKind === "textData") {
-            addMessage({
-              ackId: 0,
-              data: msg.data.data.textData,
-            });
+          if (msg.payload.oneofKind === "receipt") {
+            updateMessage(msg.payload.receipt.msgId, { success: true });
             return;
           }
           // binary data
-          if (msg.data?.data.oneofKind === "binaryData") {
-            let data: Any | undefined;
-            try {
-              // 将 binary 当做 protobuf.Any 处理
-              data = Any.fromBinary(msg.data.data.binaryData);
-            } catch (e) {
-              // unknown binary data
+          if (msg.payload.oneofKind === "response") {
+            const payload = msg.payload.response.data;
+            if (payload.oneofKind === "text") {
               addMessage({
                 ackId: 0,
-                data: `[binary] length=${msg.data.data.binaryData.length}`,
+                data: payload.text.content,
               });
-              return;
-            }
-            // fallback to protobuf data
-            msg.data.data = {
-              oneofKind: "protobufData",
-              protobufData: data,
-            };
-          }
-          // protobuf message
-          if (msg.data?.data.oneofKind === "protobufData") {
-            const data = msg.data.data.protobufData;
-            if (Any.contains(data, TextMessage)) {
-              const user_text = Any.unpack(data, TextMessage);
+            } else if (payload.oneofKind === "audio") {
               addMessage({
                 ackId: 0,
-                data: `${user_text.content}`,
+                data: `[audio] length=${payload.audio.content.length}`,
               });
-            } else {
-              // unknown message
+            } else if (payload.oneofKind === "image") {
               addMessage({
                 ackId: 0,
-                data: `[${data.typeUrl}]`,
+                data: `[image] data=${payload.image.image}`,
               });
+            } else if (payload.oneofKind === "started") {
+              console.log(
+                "started. reply to",
+                msg.payload.response.replyToMsgId
+              );
+            } else if (payload.oneofKind === "ended") {
+              console.log("ended. reply to", msg.payload.response.replyToMsgId);
             }
           }
         },
@@ -153,10 +137,11 @@ export default function Home() {
       });
       return client;
     });
-  }, [refreshClient]);
+  }, [refreshClient, updateMessage]);
 
-  const reconnect = useCallback(() => {
+  const reconnect = useCallback(async () => {
     client?.abort();
+    await client?.connect();
   }, [client]);
 
   const [inputValue, setInputValue] = useState<string>();
@@ -165,21 +150,43 @@ export default function Home() {
   const sendMessage = useCallback(
     async (msg: Message) => {
       try {
-        const ack = await client?.sendEvent(msg.ackId, "user_text", {
-          data: {
-            oneofKind: "protobufData",
-            protobufData: Any.pack(
-              TextMessage.create({ content: `${msg.data}` }),
-              TextMessage
-            ),
+        const ack = await client?.sendEvent({
+          ackId: `${msg.ackId}`,
+          common: {
+            msgId: `${msg.ackId}`,
+            audioOn: true,
+            userCommon: {
+              tz: "+08:00",
+              tzId: "Asia/Shanghai",
+              locale: "zh-Hans-CN",
+              gnss: {
+                country: "\u4e2d\u56fd",
+                lat: 39.988180422174764,
+                countryCode: "CN",
+                adminArea: "",
+                locality: "\u5317\u4eac\u5e02",
+                subLocality: "\u6d77\u6dc0\u533a",
+                lng: 116.33422998840214,
+              },
+            },
+          },
+          payload: {
+            oneofKind: "text",
+            text: {
+              charId: "1",
+              content: `${msg.data}`,
+            },
           },
         });
         if (ack) {
-          updateMessage(ack.ackId, { success: ack.success });
+          if (!ack.success) {
+            updateMessage(ack.ackId, { success: false });
+          }
+          console.log(`Received ack: ${ack}`);
         }
       } catch (ack) {
         updateMessage(msg.ackId, { success: false });
-        console.error(`Failed: ${ack}`);
+        console.error(`Failed:`, ack);
       }
     },
     [client, updateMessage]
@@ -224,13 +231,15 @@ export default function Home() {
 
         <div className="flex gap-4 items-center flex-col sm:flex-row">
           <Button
-            isLoading={
-              client?.connectionStatus === ConnectionStatus.Connecting ||
-              client?.connectionStatus === ConnectionStatus.Reconnecting
-            }
+            isLoading={client?.connectionStatus === ConnectionStatus.Connecting}
             onClick={client ? reconnect : connect}
+            isDisabled={client?.connectionStatus === ConnectionStatus.Connected}
           >
-            {client ? "Reconnect" : "Connect"}
+            {client
+              ? client.connectionStatus === ConnectionStatus.Connected
+                ? "Connected"
+                : "Reconnect"
+              : "Connect"}
           </Button>
           <form
             onSubmit={async (e) => {
@@ -240,7 +249,10 @@ export default function Home() {
           >
             <Input
               placeholder="Type to chat..."
-              disabled={isLoading}
+              disabled={
+                isLoading ||
+                client?.connectionStatus !== ConnectionStatus.Connected
+              }
               value={inputValue}
               onValueChange={setInputValue}
             />
@@ -254,7 +266,10 @@ export default function Home() {
         <div className="flex flex-col w-[400px] gap-2">
           {messages.map((msg) => {
             return (
-              <Card key={`${msg.ackId}-${msg.datetime}`} className="w-full">
+              <Card
+                key={`${msg.ackId || msg.id}-${msg.datetime}`}
+                className="w-full"
+              >
                 <CardBody>{msg.data as string}</CardBody>
                 <Divider />
                 <CardFooter className="flex-row-reverse gap-2">

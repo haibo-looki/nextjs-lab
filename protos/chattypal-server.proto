@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package looki.chatty_pal;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+message ServerMessage {
+  oneof message {
+    Ack ack = 1;
+    Event event = 2;
+  }
+
+  message Ack {
+    uint64 ack_id = 1;
+    bool success = 2;
+    optional string error = 3;
+  }
+
+  message System {
+    message Connected {
+      string connection_id = 1;  // 可以用 snowflake 生成，用于追踪日志
+    }
+    Connected connected = 1;
+  }
+
+  message Event {
+    uint64 seq_id = 1;  // seq_id 可以用 snowflake 生成
+    oneof payload {
+      ServerReceiptEvent receipt = 10;
+      ServerResponseEvent response = 11;
+      ServerToolEvent tool = 12;
+      ServerSkipOnBoardingEvent skip_ob = 14;
+      ServerProactiveEvent proactive = 15;
+    }
+  }
+}
+
+message ServerReceiptEvent {
+  uint64 msg_id = 1;
+  optional uint64 serv_msg_id = 2;
+  optional string text = 3;         // UserTextEvent 和 UserAudioEvent 的回执会包含这个字段
+  optional ServerImage image = 4;   // UserFileEvent 的回执会包含这个字段
+}
+
+message ServerResponseEvent {
+  uint64 reply_to_msg_id = 1;
+  oneof data {
+    Started started = 2;    // 对应 res_msg_cmd type=0
+    Ended ended = 3;        // 对应 res_msg_cmd type=1
+    Text text = 4;          // 对应 res_msg type=0
+    Audio audio = 5;        // 对应 res_msg type=1
+    Image image = 6;        // 对应 res_msg type=2
+  }
+
+  message Started {}
+  message Ended {
+    uint64 serv_msg_id = 1;
+  }
+  message Text {
+    string content = 1;
+  }
+  message Audio {
+    bytes content = 1;
+  }
+  message Image {
+    uint64 serv_msg_id = 1;
+    string role = 2;
+    ServerImage image = 3;
+  }
+}
+
+message ServerToolEvent {
+  enum Type {
+    SERVER_TOOL_EVENT_TYPE_KNOWN = 0;
+    SERVER_TOOL_EVENT_TYPE_SWITCH_CHAR = 1;
+    SERVER_TOOL_EVENT_TYPE_SEARCHING = 2;
+    SERVER_TOOL_EVENT_TYPE_REMINDER = 10;
+    SERVER_TOOL_EVENT_TYPE_NOTE = 11;
+    SERVER_TOOL_EVENT_TYPE_CALENDAR = 12;
+  }
+  uint64 reply_to_msg_id = 1;
+  Type type = 2;
+  google.protobuf.Struct data = 3;
+}
+
+message ServerSkipOnBoardingEvent {
+  bool is_onboarding = 1;
+  repeated int32 ob_steps = 2;
+  optional int32 cur_ob_step = 3;
+}
+
+message ServerProactiveEvent {
+  message Character {
+    uint64 id = 1;
+    ServerImage image = 2;
+  }
+  message Message {
+    message Text {
+      repeated string texts = 1;
+    }
+    uint64 id = 1;
+    int32 role = 2;
+    int32 type = 3;
+    google.protobuf.Timestamp created_at = 4;
+    oneof data {
+      Text text = 10;
+      ServerImage image = 11;
+    }
+  }
+  Character character = 1;
+  string title = 2;
+  repeated Message messages = 3;
+}
+
+message ServerImage {
+  string source = 1;
+  string bucket = 2;
+  string key = 3;
+  optional int32 width = 4;
+  optional int32 height = 5;
+  optional google.protobuf.Struct metadata = 6;
+}

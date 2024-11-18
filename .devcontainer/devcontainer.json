@@ -1,0 +1,48 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://code.visualstudio.com/docs/devcontainers/containers
+{
+  "name": "devbox-labex-facade",
+  // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:18",
+
+  "mounts": [
+    "source=${localEnv:HOME}/.ssh,target=/home/node/.ssh,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig,type=bind,consistency=cached",
+    "target=${containerWorkspaceFolder}/node_modules,type=volume",
+    "source=${localWorkspaceFolderBasename}-pnpm-store,target=/home/node/.pnpm-store,type=volume"
+  ],
+
+  "runArgs": ["--add-host=host.docker.internal:host-gateway"],
+
+  // Features to add to the dev container. More info: https://containers.dev/features.
+  // "features": {},
+
+  // Use 'forwardPorts' to make a list of ports inside the container available locally.
+  "forwardPorts": [3000],
+
+  // Connect as a specific user instead. More info: https://aka.ms/dev-containers-non-root.
+  "remoteUser": "node",
+
+  // Use 'postCreateCommand' to run commands after the container is created.
+  "postCreateCommand": {
+    "deps": "sudo apt-get update && sudo apt-get install -y build-essential libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev",
+    "mount-node_modules": "sudo chown node node_modules",
+    "mount-pnpm-store": "sudo chown node ~/.pnpm-store",
+    "pnpm": "pnpm config set store-dir ~/.pnpm-store"
+  },
+
+  // Configure tool-specific properties.
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "dsznajder.es7-react-js-snippets",
+        "antfu.goto-alias",
+        "Wscats.eno",
+        "antfu.iconify",
+        "EditorConfig.EditorConfig"
+      ]
+    }
+  }
+}
