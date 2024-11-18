@@ -20,10 +20,7 @@ interface ConnectedMessage {
 export interface AckMessage {
   ackId: string;
   success: boolean;
-  error?: {
-    name: "Forbidden" | "InternalServerError" | "Duplicate" | string;
-    message?: string;
-  };
+  error?: string;
 }
 
 interface AckHandler {
@@ -35,7 +32,7 @@ export class ReliableWebSocketClient {
   connectionStatus = ConnectionStatus.Disconnected;
   connectionId = "";
   lastReceivedSequenceId = "";
-  ackHandlers: Record<number | string, AckHandler> = {};
+  waitingList: Record<number | string, AckHandler> = {};
   closed = false;
   options: {
     url: string;
@@ -109,7 +106,7 @@ export class ReliableWebSocketClient {
         // 如 ack 消息包含失败信息，client 应进行重试
         const data = down_message.message.ack;
         const handleAck = (ackMessage: AckMessage) => {
-          const item = this.ackHandlers[ackMessage.ackId];
+          const item = this.waitingList[ackMessage.ackId];
           if (item !== null) {
             if (ackMessage.success) {
               item.deferred.resolve(ackMessage);
@@ -117,28 +114,28 @@ export class ReliableWebSocketClient {
               item.deferred.reject(ackMessage);
             }
 
-            delete this.ackHandlers[ackMessage.ackId];
+            delete this.waitingList[ackMessage.ackId];
           }
         };
 
         // ack 之前的消息全部标记为 failure
-        for (const key in this.ackHandlers) {
+        for (const key in this.waitingList) {
           if (key >= data.ackId) {
             continue;
           }
-          const value = this.ackHandlers[key];
+          const value = this.waitingList[key];
           value.deferred.reject({
             ackId: key,
             success: false,
             error: { name: "Timeout" },
           });
-          delete this.ackHandlers[key];
+          delete this.waitingList[key];
         }
 
         handleAck({
           ackId: data.ackId,
           success: data.success,
-          error: data.error ? { name: data.error } : undefined,
+          error: data.error,
         });
       } else if (down_message.message.oneofKind === "event") {
         const data = down_message.message.event;
@@ -178,7 +175,7 @@ export class ReliableWebSocketClient {
   sendEvent(data: UserMessage_UserEvent) {
     const ackId = data.ackId;
     const deferred = new Deferred<AckMessage>();
-    this.ackHandlers[ackId] = {
+    this.waitingList[ackId] = {
       deferred,
     };
 
@@ -193,7 +190,7 @@ export class ReliableWebSocketClient {
 
         // 超时断连
         delay(5000).then(() => {
-          if (this.ackHandlers[ackId]) {
+          if (this.waitingList[ackId]) {
             this.abort();
           }
         });
@@ -222,7 +219,7 @@ export class ReliableWebSocketClient {
 
   // 将 client 发送的所有未 ack 的消息标记失败
   cleanupAck() {
-    const ackHandlers = this.ackHandlers;
+    const ackHandlers = this.waitingList;
     for (const key in ackHandlers) {
       const value = ackHandlers[key];
       value.deferred.reject({
