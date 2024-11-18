@@ -4,12 +4,7 @@
 import Image from "next/image";
 import { Input } from "@nextui-org/input";
 import {
-  forwardRef,
   useCallback,
-  useEffect,
-  useImperativeHandle,
-  useReducer,
-  useRef,
   useState,
 } from "react";
 import {
@@ -17,7 +12,6 @@ import {
   Card,
   CardBody,
   CardFooter,
-  CardHeader,
   Chip,
   Divider,
 } from "@nextui-org/react";
@@ -25,14 +19,11 @@ import {
   ConnectionStatus,
   ReliableWebSocketClient,
 } from "@/lib/chattypal_client";
-import { TextMessage } from "@/protos/test";
 import { Any } from "@/protos/google/protobuf/any";
 import { v4 as uuidv4 } from "uuid";
 
 const token = process.env.NEXT_PUBLIC_AUTH_TOKEN;
 
-
-msg_buffer: {}[] = [];
 
 interface Message {
   id?: string;

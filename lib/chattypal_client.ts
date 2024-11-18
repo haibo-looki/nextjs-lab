@@ -3,6 +3,8 @@
 import {
   ServerMessage,
   ServerMessage_ServerEvent,
+  ServerMessage_Connected,
+  ServerMessage_Ack,
 } from "@/protos/chattypal-server";
 
 import { UserMessage, UserMessage_UserEvent } from "@/protos/chattypal-client";
@@ -13,32 +15,21 @@ export enum ConnectionStatus {
   Connected = "Connected",
 }
 
-interface ConnectedMessage {
-  connectionId: string;
-}
-
-export interface AckMessage {
-  ackId: string;
-  success: boolean;
-  error?: string;
-}
-
 interface AckHandler {
-  deferred: Deferred<AckMessage>;
+  deferred: Deferred<ServerMessage_Ack>;
 }
 
 export class ReliableWebSocketClient {
   connection: WebSocket | null = null;
   connectionStatus = ConnectionStatus.Disconnected;
   connectionId = "";
-  lastReceivedSequenceId = "";
   waitingList: Record<number | string, AckHandler> = {};
   closed = false;
   options: {
     url: string;
     token: string;
     onMessage?: (msg: ServerMessage_ServerEvent) => void;
-    onConnected?: (msg: ConnectedMessage) => void;
+    onConnected?: (msg: ServerMessage_Connected) => void;
     onDisconnected?: () => void;
     log: typeof console.log;
   };
@@ -105,7 +96,7 @@ export class ReliableWebSocketClient {
         // ack 消息表示服务器已收到 client 发送的消息
         // 如 ack 消息包含失败信息，client 应进行重试
         const data = down_message.message.ack;
-        const handleAck = (ackMessage: AckMessage) => {
+        const handleAck = (ackMessage: ServerMessage_Ack) => {
           const item = this.waitingList[ackMessage.ackId];
           if (item !== null) {
             if (ackMessage.success) {
@@ -117,26 +108,19 @@ export class ReliableWebSocketClient {
             delete this.waitingList[ackMessage.ackId];
           }
         };
+        handleAck(data);
 
         // ack 之前的消息全部标记为 failure
         for (const key in this.waitingList) {
           if (key >= data.ackId) {
             continue;
           }
-          const value = this.waitingList[key];
-          value.deferred.reject({
+          handleAck({
             ackId: key,
             success: false,
             error: { name: "Timeout" },
           });
-          delete this.waitingList[key];
         }
-
-        handleAck({
-          ackId: data.ackId,
-          success: data.success,
-          error: data.error,
-        });
       } else if (down_message.message.oneofKind === "event") {
         const data = down_message.message.event;
         if (data.payload.oneofKind === "connected") {
@@ -153,15 +137,12 @@ export class ReliableWebSocketClient {
           return;
         }
         // 包含 sequence id 的消息，需要立即回复 ack
-        if (data.seqId > this.lastReceivedSequenceId) {
-          this.lastReceivedSequenceId = data.seqId;
-          this.send({
-            message: {
-              oneofKind: "seqAck",
-              seqAck: { seqId: this.lastReceivedSequenceId },
-            },
-          });
-        }
+        this.send({
+          message: {
+            oneofKind: "seqAck",
+            seqAck: { seqId: data.seqId },
+          },
+        });
         // 收到 server 发来的消息
         this.options.onMessage?.(data);
       }
@@ -174,7 +155,7 @@ export class ReliableWebSocketClient {
 
   sendEvent(data: UserMessage_UserEvent) {
     const ackId = data.ackId;
-    const deferred = new Deferred<AckMessage>();
+    const deferred = new Deferred<ServerMessage_Ack>();
     this.waitingList[ackId] = {
       deferred,
     };
